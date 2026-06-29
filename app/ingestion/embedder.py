@@ -19,6 +19,7 @@ Performance note:
     where possible, which removes the biggest slowdown from large uploads.
 """
 
+import re
 import time
 from google import genai
 from google.genai import types
@@ -32,8 +33,55 @@ client = genai.Client(api_key=settings.gemini_api_key)
 
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIM = 768  # must match the VECTOR(768) column in our schema
-DEFAULT_BATCH_SIZE = 20
-MAX_BATCH_CHARS = 24000
+
+# Batch size + payload cap. Each embed_content() call counts as ONE request
+# against the free tier's quotas (100/min, 1000/day), regardless of how many
+# texts it carries. So bigger batches = fewer requests = we stay under quota
+# on larger files AND get throttled far less often. We cap the per-request
+# payload (chars) too, so an unusually dense document can't build a request so
+# large the API rejects it. ~300 tokens/1200 chars per chunk * 50 stays well
+# under the per-request token budget.
+DEFAULT_BATCH_SIZE = 50
+MAX_BATCH_CHARS = 40000
+
+# Backoff ceiling for transient retries. The API usually tells us exactly how
+# long to wait (RetryInfo); we honor that but never sleep longer than this so a
+# single throttled batch can't stall an upload for minutes.
+MAX_BACKOFF_SECONDS = 30
+
+
+def _retry_after_seconds(error) -> float | None:
+    """
+    Pull the server-suggested retry delay out of a 429/5xx error.
+
+    Gemini's 429 responses carry a RetryInfo with the exact wait, e.g.
+    "Please retry in 1.778s" / "retryDelay': '1s'". Honoring it means a
+    throttled batch resumes in ~2s instead of our old blind 10/20/40s sleeps,
+    which is what made large uploads crawl. Returns None if no hint is found.
+    """
+    text = str(error)
+    m = re.search(r"retry in ([0-9.]+)s", text)
+    if m:
+        return float(m.group(1))
+    m = re.search(r"retryDelay['\"]?\s*[:=]\s*['\"]?([0-9.]+)s", text)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+class DailyQuotaExceeded(RuntimeError):
+    """Raised when the free-tier *per-day* embedding quota is exhausted.
+
+    Distinct from a per-minute throttle: waiting and retrying within the same
+    day cannot succeed, so callers should surface a clear "try again tomorrow"
+    message instead of grinding through backoff retries.
+    """
+
+
+def _is_daily_quota_error(error) -> bool:
+    """True if a 429 is the per-DAY quota (vs a per-minute rate limit)."""
+    text = str(error)
+    return "PerDay" in text or "RequestsPerDay" in text
 
 
 def _embed_contents(contents, task_type: str, max_retries: int):
@@ -63,11 +111,24 @@ def _embed_contents(contents, task_type: str, max_retries: int):
             #   5xx (e.g. 503 UNAVAILABLE) -> transient server-side outage
             # Any other status is a real bug and should surface immediately.
             code = getattr(e, "code", None)
+            # A per-DAY quota hit can't recover by waiting today -- fail fast
+            # with a clear, friendly error instead of burning the retry budget.
+            if code == 429 and _is_daily_quota_error(e):
+                raise DailyQuotaExceeded(
+                    "Daily document-processing limit reached. Please try again "
+                    "tomorrow (the free quota resets each day)."
+                ) from e
             transient = code == 429 or (code is not None and 500 <= code < 600)
             if not transient or attempt == max_retries - 1:
                 raise
-            backoff = 2 ** attempt * 10  # 10s, 20s, 40s, ... backoff
-            print(f"  Transient API error {code}; backing off {backoff}s "
+            # Prefer the server's own retry hint; fall back to a gentle
+            # exponential (2s, 4s, 8s) only when the API doesn't supply one.
+            # Either way, never exceed MAX_BACKOFF_SECONDS.
+            suggested = _retry_after_seconds(e)
+            if suggested is None:
+                suggested = 2 ** (attempt + 1)  # 2s, 4s, 8s, ...
+            backoff = min(suggested + 0.5, MAX_BACKOFF_SECONDS)
+            print(f"  Transient API error {code}; backing off {backoff:.1f}s "
                   f"(retry {attempt + 1}/{max_retries - 1})...")
             time.sleep(backoff)
 

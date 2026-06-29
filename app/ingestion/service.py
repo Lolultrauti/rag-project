@@ -22,7 +22,7 @@ import os
 from langchain_core.documents import Document
 
 from app.ingestion.loader import load_pdf, chunk_documents
-from app.ingestion.embedder import embed_chunks
+from app.ingestion.embedder import embed_chunks, DailyQuotaExceeded
 from app.db.writer import (
     get_connection,
     compute_file_hash,
@@ -106,6 +106,15 @@ def ingest_path(file_path: str) -> dict:
             "status": "ingested", "filename": filename, "chunks": inserted,
             "document_id": document_id,
             "message": f"Indexed {inserted} chunks.",
+        }
+    except DailyQuotaExceeded as e:
+        # Expected, user-facing condition -- show the clean message as-is
+        # (no exception-type prefix) so the UI can display it directly.
+        conn.rollback()
+        return {
+            "status": "failed", "filename": filename, "chunks": 0,
+            "document_id": None,
+            "message": str(e),
         }
     except Exception as e:
         conn.rollback()
