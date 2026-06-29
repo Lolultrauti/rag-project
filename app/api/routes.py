@@ -35,7 +35,7 @@ from app.config import settings
 from app.rate_limit import limiter
 from app.cost_cap import check_and_increment
 from app.db.pool import pooled_connection
-from app.generation.chain import answer_question
+from app.generation.chain import answer_question, maybe_handle_small_talk
 
 logger = logging.getLogger("rag.api")
 
@@ -53,8 +53,9 @@ class QueryRequest(BaseModel):
 class Source(BaseModel):
     document_id: int
     chunk_index: int
+    filename: str
     similarity: float
-    # We include a short preview (not the full chunk) so a caller can sanity
+    # We include a short preview (not the full passage) so a caller can sanity
     # check grounding without us shipping large passages over the wire by
     # default. Full content stays server-side; expose it later if a UI needs it.
     preview: str
@@ -70,6 +71,10 @@ class QueryResponse(BaseModel):
 async def query(request: Request, req: QueryRequest) -> QueryResponse:
     # NOTE: `request: Request` is required by slowapi's decorator (it reads the
     # client IP from it); it isn't used directly in the body.
+
+    small_talk = maybe_handle_small_talk(req.question)
+    if small_talk is not None:
+        return QueryResponse(answer=small_talk, sources=[])
 
     # Daily cost cap FIRST -- before any embedding/generation spend. Once the
     # day's budget is gone we reject cheaply rather than calling the LLM.
@@ -94,6 +99,7 @@ async def query(request: Request, req: QueryRequest) -> QueryResponse:
         Source(
             document_id=c["document_id"],
             chunk_index=c["chunk_index"],
+            filename=c.get("source_filename", ""),
             similarity=round(c["similarity"], 4),
             preview=" ".join(c["content"].split())[:200],
         )

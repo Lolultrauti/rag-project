@@ -24,17 +24,17 @@ def load_pdf(file_path: str):
     return pages
 
 
-def chunk_documents(documents, chunk_size: int = 800, chunk_overlap: int = 100):
+def chunk_documents(documents, chunk_size: int = 1200, chunk_overlap: int = 150):
     """
     Splits loaded documents into overlapping chunks.
 
-    chunk_size=800 characters (~150-200 tokens) is a reasonable starting point
-    for general text — small enough that each chunk stays topically focused,
-    large enough to retain context. We're using character count here (not
+    chunk_size=1200 characters is a practical balance for this app: fewer
+    chunks means faster upload/indexing, while still keeping each passage
+    focused enough for retrieval. We're using character count here (not
     token count) for simplicity; LangChain's splitter operates on characters
     by default unless you give it a token-counting function.
 
-    chunk_overlap=100 means each chunk repeats the last 100 characters of the
+    chunk_overlap=150 means each chunk repeats the last 150 characters of the
     previous chunk. This prevents a sentence or idea from being cut cleanly
     in half at a chunk boundary, which would otherwise destroy context for
     whichever half gets retrieved.

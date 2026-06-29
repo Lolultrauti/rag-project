@@ -86,12 +86,15 @@ def index():
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 
-def _chunk_count() -> int:
-    """Blocking count of indexed chunks, run in a threadpool for /stats."""
+def _corpus_stats() -> dict:
+    """Blocking count of documents + passages, run in a threadpool for /stats."""
     with pooled_connection() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM documents;")
+            docs = cur.fetchone()[0]
             cur.execute("SELECT count(*) FROM document_chunks;")
-            return cur.fetchone()[0]
+            chunks = cur.fetchone()[0]
+            return {"documents": docs, "chunks": chunks}
 
 
 @app.post("/ingest")
@@ -135,12 +138,12 @@ async def ingest(file: UploadFile = File(...)):
 
 @app.get("/stats")
 async def stats():
-    """Lightweight corpus stats for the UI sidebar (indexed chunk count)."""
+    """Lightweight corpus stats for the UI sidebar (document + passage counts)."""
     try:
-        count = await run_in_threadpool(_chunk_count)
-        return {"chunks": count}
+        return await run_in_threadpool(_corpus_stats)
     except Exception:
-        return JSONResponse(status_code=503, content={"chunks": None})
+        return JSONResponse(status_code=503,
+                            content={"documents": None, "chunks": None})
 
 
 @app.get("/health")

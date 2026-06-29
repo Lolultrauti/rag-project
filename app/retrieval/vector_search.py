@@ -42,16 +42,20 @@ def _search_blocking(query: str, top_k: int, min_similarity: float):
             # similarity = 1 - distance for an easy "higher is better" score.
             # The WHERE clause drops anything below the similarity floor
             # before it's ever fetched.
+            # Join documents so each result carries its human-readable source
+            # filename (for the UI) alongside the raw ids.
             cur.execute(
                 """
                 SELECT
-                    document_id,
-                    chunk_index,
-                    content,
-                    1 - (embedding <=> %s::vector) AS similarity
-                FROM document_chunks
-                WHERE (embedding <=> %s::vector) <= %s
-                ORDER BY embedding <=> %s::vector
+                    dc.document_id,
+                    dc.chunk_index,
+                    dc.content,
+                    d.source_filename,
+                    1 - (dc.embedding <=> %s::vector) AS similarity
+                FROM document_chunks dc
+                JOIN documents d ON d.id = dc.document_id
+                WHERE (dc.embedding <=> %s::vector) <= %s
+                ORDER BY dc.embedding <=> %s::vector
                 LIMIT %s;
                 """,
                 (query_vector_str, query_vector_str, max_distance,
@@ -66,7 +70,8 @@ def _search_blocking(query: str, top_k: int, min_similarity: float):
             "document_id": r[0],
             "chunk_index": r[1],
             "content": r[2],
-            "similarity": float(r[3]),
+            "source_filename": r[3],
+            "similarity": float(r[4]),
         }
         for r in rows
     ]

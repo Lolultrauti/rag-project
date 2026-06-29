@@ -18,6 +18,7 @@ non-blocking end to end.
 """
 
 import asyncio
+import re
 
 from google import genai
 from google.genai import types
@@ -45,6 +46,52 @@ GENERATION_MODEL = "gemini-2.5-flash"
 # time.sleep) so waiting doesn't block the event loop.
 _GEN_MAX_RETRIES = 3
 _GEN_BASE_BACKOFF = 1  # seconds: 1s, 2s, ...
+
+
+def maybe_handle_small_talk(question: str):
+    """
+    Return a friendly direct reply for greetings and other lightweight chat.
+
+    This keeps the assistant interactive instead of forcing everything
+    through retrieval, which would make simple messages like "hi" look like
+    failures when there is no document context yet.
+    """
+    normalized = re.sub(r"[^a-z0-9\s]+", " ", question.lower())
+    normalized = " ".join(normalized.split())
+    if not normalized:
+        return None
+
+    greetings = {
+        "hi",
+        "hello",
+        "hey",
+        "hiya",
+        "yo",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    }
+    if normalized in greetings:
+        return (
+            "Hi! I'm Helix. Ask me about a document you uploaded, or say "
+            "something like 'summarize this PDF' or 'find mentions of revenue'. "
+            "What would you like to explore?"
+        )
+
+    if normalized in {"help", "what can you do", "who are you", "what are you"}:
+        return (
+            "I'm Helix, a document assistant. I can search your uploaded files, "
+            "summarize sections, and pull out specific facts. Try asking a "
+            "question about the documents you've added."
+        )
+
+    if normalized in {"how are you", "how are you doing"}:
+        return "I'm ready to help. Ask me something about your documents."
+
+    if normalized in {"thanks", "thank you", "thx", "ty"}:
+        return "You're welcome. Ask me anything about your documents whenever you're ready."
+
+    return None
 
 
 async def generate_answer(prompt: str) -> str:
@@ -85,12 +132,21 @@ async def answer_question(question: str, top_k: int = 5):
     Returns (answer_text, retrieved_chunks) so callers (e.g. the API layer)
     can surface the source passages alongside the answer for transparency.
 
+    If the input is just a greeting or other lightweight chat, we return a
+    friendly direct response immediately and skip retrieval entirely. That
+    keeps the app feeling conversational and avoids wasting a search call on
+    messages that do not need document grounding.
+
     If retrieval returns nothing above the similarity floor, we short-circuit:
     abstain immediately with the standard message and skip the LLM call
     entirely. There is no context to reason over, so spending a generation
     call (latency + cost) would be pure waste -- and the answer is already
     known. chunks is [] in that case, so the API reports no sources.
     """
+    small_talk = maybe_handle_small_talk(question)
+    if small_talk is not None:
+        return small_talk, []
+
     chunks = await search(question, top_k=top_k)
     if not chunks:
         return ABSTAIN_MESSAGE, chunks
@@ -117,9 +173,8 @@ if __name__ == "__main__":
             print(f"[{i}] sim={c['similarity']:.3f} chunk={c['chunk_index']}: {preview}")
 
         # Negative control: a question the PDF can't answer should abstain.
-        print("\n--- Abstention test ---")
         off_topic = "What is the capital of France?"
         ans2, _ = await answer_question(off_topic)
-        print(f"Q: {off_topic}\nA: {ans2}")
+        print(f"\n--- Abstention test ---\nQ: {off_topic}\nA: {ans2}")
 
     asyncio.run(_demo())

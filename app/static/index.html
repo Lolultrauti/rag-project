@@ -233,6 +233,17 @@
   .modal .mfb { display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 12px; border: none;
     font-size: 13px; font-weight: 600; color: #fff; background: var(--brand-grad); box-shadow: 0 10px 24px var(--glow); }
   .modal .mfb:hover { filter: brightness(1.1); }
+  .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; gap: 14px; color: rgba(238,241,251,0.85); padding: 40px; }
+  .empty .glyph { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center;
+    background: var(--brand-grad); box-shadow: 0 12px 30px var(--glow); }
+  .empty h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+  .empty p { font-size: 13.5px; color: rgba(238,241,251,0.5); margin: 0; max-width: 380px; line-height: 1.6; }
+  .quick-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; max-width: 540px; }
+  .quick-actions button { min-height: 34px; padding: 8px 12px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.14); color: rgba(238,241,251,0.86);
+    background: rgba(255,255,255,0.055); font-size: 12.5px; font-weight: 600; }
+  .quick-actions button:hover { color: #fff; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.26); }
   .note { margin-top: 14px; font-size: 11.5px; line-height: 1.5; color: rgba(238,241,251,0.5);
     background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 11px 13px; }
 </style>
@@ -256,15 +267,12 @@
         New chat
       </button>
 
-      <div class="recents">
-        <div class="label">Example questions</div>
-        <div id="recents"></div>
-      </div>
+      <div style="flex:1; min-height:0;"></div>
 
       <button class="ingest-btn" id="openIngest">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8 12 3 7 8"/><path d="M12 3v12"/></svg>
-        Ingest documents
-        <span class="count" id="chunkCount">…</span>
+        Add documents
+        <span class="count" id="chunkCount"></span>
       </button>
 
       <div class="userbox">
@@ -279,7 +287,7 @@
     <!-- MAIN -->
     <main>
       <div class="topbar">
-        <div class="pill"><span class="dot"></span> Helix · grounded retrieval</div>
+        <div class="pill"><span class="dot"></span> Helix</div>
         <div style="flex:1;"></div>
         <div class="latency"><span class="dot"></span> <span id="latency">ready</span></div>
       </div>
@@ -292,13 +300,13 @@
         <div class="composer">
           <div class="box">
             <div class="inner">
-              <textarea id="draft" rows="1" placeholder="Ask anything across your indexed knowledge base…"></textarea>
+              <textarea id="draft" rows="1" placeholder="Say hi or ask about your documents..."></textarea>
               <button class="send" id="send" title="Send">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
               </button>
             </div>
           </div>
-          <div class="foot">Answers are grounded in your private documents · top_k 5</div>
+          <div class="foot">Helix can chat, but document answers stay grounded.</div>
         </div>
       </div>
     </main>
@@ -309,8 +317,8 @@
     <div class="modal" id="ingestModal">
       <div class="mh">
         <div>
-          <div class="mt">Data Ingestion</div>
-          <div class="ms">Chunk, embed &amp; index into pgvector</div>
+          <div class="mt">Add documents</div>
+          <div class="ms">Upload files for Helix to read</div>
         </div>
         <button class="mx" id="closeIngest">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
@@ -326,10 +334,8 @@
       <input type="file" id="fileInput" accept=".pdf,.txt,.md" multiple style="display:none">
       <div class="uploads" id="uploads"></div>
       <div class="note">
-        Files you add here are ingested for real: hashed for idempotency, chunked,
-        embedded via Gemini, and inserted into pgvector — the same pipeline the CLI uses.
-        Large PDFs take a bit (embedding is paced under the API rate limit). Re-uploading
-        the same file is detected and skipped.
+        Helix reads each file so you can ask about it. Large PDFs take a little longer.
+        Adding the same file twice is detected and skipped automatically.
       </div>
       <div class="mf">
         <div class="mfs" id="ingestSummary">No files queued yet</div>
@@ -368,6 +374,20 @@ function scrollDown() { requestAnimationFrame(() => { convo.scrollTop = convo.sc
 function scoreColor(pct) { return pct >= 95 ? '#6ee7b7' : pct >= 85 ? 'var(--accent)' : 'rgba(238,241,251,0.65)'; }
 
 function render() {
+  if (!messages.length) {
+    convoInner.innerHTML = `<div class="empty">
+      <div class="glyph">${HELIX_ICON.replace('width="14" height="14"','width="26" height="26"')}</div>
+      <h1>How can I help?</h1>
+      <p>Add your documents, ask a grounded question, or just say hello.</p>
+      <div class="quick-actions">
+        <button type="button" data-prompt="hi">Say hi</button>
+        <button type="button" data-prompt="What can you do?">What can you do?</button>
+        <button type="button" data-open-ingest="true">Add documents</button>
+        <button type="button" data-prompt="Summarize the uploaded document">Summarize a document</button>
+      </div>
+    </div>`;
+    return;
+  }
   convoInner.innerHTML = messages.map((m, i) => {
     if (m.role === 'user') {
       return `<div class="row user"><div class="bubble-user">${esc(m.text)}</div></div>`;
@@ -377,7 +397,7 @@ function render() {
     if (m.thinking) {
       body = `<div class="ai-card"><div class="thinking">
         <div class="dots"><span></span><span></span><span></span></div>
-        <span class="lbl">Retrieving chunks &amp; generating grounded answer…</span>
+        <span class="lbl">Thinking…</span>
       </div></div>`;
     } else if (m.error) {
       body = `<div class="ai-card error"><div class="answer">${esc(m.answer)}</div></div>`;
@@ -390,10 +410,11 @@ function render() {
     if (!m.thinking && !m.error && !m.streaming && m.sources && m.sources.length) {
       const cards = m.sources.map(s => {
         const pct = Math.round((s.similarity || 0) * 100);
+        const name = s.filename || 'Document';
         return `<div class="card">
           <div class="ch">
             <span class="ci">${DOC_ICON}</span>
-            <span class="cn">Doc ${s.document_id} · chunk ${s.chunk_index}</span>
+            <span class="cn">${esc(name)}</span>
           </div>
           <div class="cp">${esc(s.preview || '')}</div>
           <div class="cb">
@@ -403,7 +424,7 @@ function render() {
         </div>`;
       }).join('');
       sources = `<div class="sources">
-        <div class="hd">${BOOK_ICON} ${m.sources.length} source${m.sources.length===1?'':'s'} referenced</div>
+        <div class="hd">${BOOK_ICON} ${m.sources.length === 1 ? 'Source' : 'Sources'}</div>
         <div class="cards">${cards}</div>
       </div>`;
     }
@@ -492,24 +513,16 @@ draft.addEventListener('keydown', (e) => {
 sendBtn.addEventListener('click', () => ask());
 el('newChat').addEventListener('click', () => { messages = []; render(); draft.focus(); });
 
-/* ---------- example questions (tuned to the ingested Digital Image Processing corpus) ---------- */
-const EXAMPLES = [
-  'What is image compression and how does the encoder work?',
-  'What are the two components of the decoder?',
-  'What are the stages of the image compression encoder?',
-  'Explain the symbol coder and mapper.',
-  'What is quantization in image compression?',
-];
-el('recents').innerHTML = EXAMPLES.map((q, i) =>
-  `<button data-q="${esc(q)}"><span>${esc(q)}</span></button>`).join('');
-el('recents').querySelectorAll('button').forEach(b =>
-  b.addEventListener('click', () => ask(b.getAttribute('data-q'))));
-
-/* ---------- ingestion modal (visual preview; honest note inside) ---------- */
+/* ---------- add-documents modal ---------- */
 const overlay = el('ingestOverlay');
 el('openIngest').addEventListener('click', () => overlay.classList.add('open'));
 el('closeIngest').addEventListener('click', () => overlay.classList.remove('open'));
 overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('open'); });
+convoInner.addEventListener('click', (e) => {
+  const quick = e.target.closest('[data-prompt]');
+  if (quick) { ask(quick.dataset.prompt); return; }
+  if (e.target.closest('[data-open-ingest]')) overlay.classList.add('open');
+});
 
 /*
   Real upload: send each file to POST /ingest. The endpoint runs the full
@@ -522,15 +535,15 @@ let uploadQueue = [];     // {name, size, status, message, chunks}
 let uploadingNow = false;
 const fileInput = el('fileInput');
 
-const ULABEL = { queued: 'Queued', working: 'Chunking & embedding…', indexed: 'Indexed ✓', skipped: 'Already indexed', failed: 'Failed' };
+const ULABEL = { queued: 'Queued', working: 'Adding…', indexed: 'Added ✓', skipped: 'Already added', failed: "Couldn't add" };
 const fmtSize = (b) => b < 1024 ? b + ' B' : b < 1048576 ? (b/1024).toFixed(0) + ' KB' : (b/1048576).toFixed(1) + ' MB';
 
 function drawUploads() {
   el('uploads').innerHTML = uploadQueue.map(u => {
     const indeterminate = u.status === 'working';
     const pct = u.status === 'indexed' || u.status === 'skipped' ? 100 : indeterminate ? 100 : 0;
-    const right = u.status === 'indexed' ? `+${u.chunks}` :
-                  u.status === 'skipped' ? 'Skip' :
+    const right = u.status === 'indexed' ? '✓' :
+                  u.status === 'skipped' ? '✓' :
                   u.status === 'failed' ? '!' :
                   u.status === 'working' ? '…' : '';
     const rightColor = u.status === 'failed' ? '#fca5a5' : u.status === 'indexed' ? '#6ee7b7' : 'var(--accent)';
@@ -553,9 +566,15 @@ function drawUploads() {
   const done = uploadQueue.filter(u => u.status === 'indexed').length;
   const skip = uploadQueue.filter(u => u.status === 'skipped').length;
   const fail = uploadQueue.filter(u => u.status === 'failed').length;
-  el('ingestSummary').textContent = uploadQueue.length
-    ? `${done} indexed · ${skip} skipped · ${fail} failed`
-    : 'No files queued yet';
+  let summary = 'No files added yet';
+  if (uploadQueue.length) {
+    const parts = [];
+    if (done) parts.push(`${done} added`);
+    if (skip) parts.push(`${skip} skipped`);
+    if (fail) parts.push(`${fail} failed`);
+    summary = parts.length ? parts.join(' · ') : 'Working…';
+  }
+  el('ingestSummary').textContent = summary;
 }
 
 async function processQueue() {
@@ -572,9 +591,9 @@ async function processQueue() {
       if (!res.ok) {
         u.status = 'failed'; u.message = j.detail || `HTTP ${res.status}`;
       } else if (j.status === 'ingested') {
-        u.status = 'indexed'; u.chunks = j.chunks; u.message = `Indexed ${j.chunks} chunks`;
+        u.status = 'indexed'; u.chunks = j.chunks; u.message = 'Added';
       } else if (j.status === 'skipped') {
-        u.status = 'skipped'; u.message = 'Duplicate — already indexed';
+        u.status = 'skipped'; u.message = 'Already added';
       } else {
         u.status = 'failed'; u.message = j.message || 'Failed';
       }
@@ -611,22 +630,17 @@ const drop = el('drop');
 }));
 drop.addEventListener('drop', (e) => { addFiles(e.dataTransfer.files); });
 
-/* ---------- live chunk count in the sidebar (real, from /stats) ---------- */
+/* ---------- live document count in the sidebar (real, from /stats) ---------- */
 async function loadStats() {
   try {
     const r = await fetch("/stats");
     const j = await r.json();
-    el('chunkCount').textContent = (j.chunks != null) ? j.chunks.toLocaleString() : '—';
-  } catch (_) { el('chunkCount').textContent = '—'; }
+    el('chunkCount').textContent = (j.documents != null && j.documents > 0) ? j.documents : '';
+  } catch (_) { el('chunkCount').textContent = ''; }
 }
 loadStats();
 
-/* ---------- greeting ---------- */
-messages.push({
-  role: 'ai', thinking: false,
-  answer: "Hi — I'm Helix. Ask me anything about your indexed documents and I'll answer strictly from the retrieved passages, with the source chunks shown below each answer. If the answer isn't in the corpus, I'll say so rather than guess.",
-  sources: [],
-});
+/* ---------- start empty ---------- */
 render();
 draft.focus();
 </script>
