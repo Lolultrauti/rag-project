@@ -16,15 +16,34 @@ Wiring done here:
     trivially fast and decoupled from the dependency-touching routes).
 """
 
+import os
+import re
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse, FileResponse
+from starlette.concurrency import run_in_threadpool
 from slowapi.errors import RateLimitExceeded
 
 from app.api.routes import router
 from app.rate_limit import limiter
-from app.db.pool import init_pool, close_pool
+from app.db.pool import init_pool, close_pool, pooled_connection
+from app.ingestion.service import ingest_path, SUPPORTED_EXTENSIONS
+
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+# Uploaded files land here (same place the CLI ingests from), so a file added
+# via the UI is indistinguishable from one added via the batch pipeline.
+RAW_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "raw")
+# Cap upload size. Embedding cost/latency scales with document length, and the
+# free Gemini tier has per-minute + daily quotas, so we keep demo uploads small.
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024  # 15 MB
+
+
+def _safe_filename(name: str) -> str:
+    """Strip any path components and unsafe chars to prevent path traversal."""
+    base = os.path.basename(name or "").strip()
+    base = re.sub(r"[^A-Za-z0-9._ -]", "_", base)
+    return base or "upload"
 
 
 @asynccontextmanager
@@ -59,6 +78,69 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
 
 
 app.include_router(router)
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    """Serve the Helix RAG single-page frontend."""
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
+
+def _chunk_count() -> int:
+    """Blocking count of indexed chunks, run in a threadpool for /stats."""
+    with pooled_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM document_chunks;")
+            return cur.fetchone()[0]
+
+
+@app.post("/ingest")
+async def ingest(file: UploadFile = File(...)):
+    """
+    Accept a user-uploaded document and run it through the real ingestion
+    pipeline (hash -> dedupe -> load -> chunk -> embed -> store), the same one
+    the CLI uses. Returns a structured result the UI renders per file.
+
+    Note: this is synchronous, blocking work (Gemini embedding calls), so it's
+    offloaded to a threadpool. Large files take a while -- embedding is paced
+    under the free-tier rate limit -- so the UI shows an indeterminate progress
+    state until this returns.
+    """
+    filename = _safe_filename(file.filename)
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported type '{ext or '?'}'. "
+                   f"Allowed: {', '.join(SUPPORTED_EXTENSIONS)}.",
+        )
+
+    contents = await file.read()
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({len(contents)//(1024*1024)} MB). "
+                   f"Max {MAX_UPLOAD_BYTES//(1024*1024)} MB.",
+        )
+
+    os.makedirs(RAW_DIR, exist_ok=True)
+    dest = os.path.join(RAW_DIR, filename)
+    with open(dest, "wb") as f:
+        f.write(contents)
+
+    # Blocking pipeline -> threadpool so the event loop stays free.
+    result = await run_in_threadpool(ingest_path, dest)
+    return result
+
+
+@app.get("/stats")
+async def stats():
+    """Lightweight corpus stats for the UI sidebar (indexed chunk count)."""
+    try:
+        count = await run_in_threadpool(_chunk_count)
+        return {"chunks": count}
+    except Exception:
+        return JSONResponse(status_code=503, content={"chunks": None})
 
 
 @app.get("/health")

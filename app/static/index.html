@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helix RAG</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /*
+    Helix RAG frontend.
+    Ported from the Claude Design component "Enterprise RAG.dc.html" into a
+    plain, build-free single page. The visual language (aurora background,
+    glassmorphism, source cards, typewriter reveal) is preserved; the mock
+    data and fake streaming are replaced with real calls to POST /query.
+  */
+  :root {
+    /* Violet theme (the design's default accent) */
+    --brand-grad: linear-gradient(135deg, #8b5cf6, #d946ef);
+    --accent: #c084fc;
+    --glow: rgba(168,85,247,0.45);
+    --score-grad: linear-gradient(90deg, #06b6d4, #c084fc);
+    --blur: 24px;
+    --convo-width: 780px;
+    --aA: 0.5; --aB: 0.45; --aC: 0.38;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    color: #eef1fb;
+    background: #090c1a;
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 8px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+  @keyframes auroraDrift {
+    0% { transform: translate(0,0) scale(1); }
+    33% { transform: translate(6%, -4%) scale(1.12); }
+    66% { transform: translate(-5%, 5%) scale(1.05); }
+    100% { transform: translate(0,0) scale(1); }
+  }
+  @keyframes auroraDrift2 {
+    0% { transform: translate(0,0) scale(1.1); }
+    50% { transform: translate(-8%, 6%) scale(1.25); }
+    100% { transform: translate(0,0) scale(1.1); }
+  }
+  @keyframes thinkPulse {
+    0%, 100% { opacity: 0.35; transform: scale(0.85); }
+    50% { opacity: 1; transform: scale(1.15); }
+  }
+  @keyframes blink { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+  @keyframes barFlow { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+
+  .shell {
+    position: relative; width: 100%; height: 100vh; min-height: 720px; overflow: hidden;
+  }
+  .aurora { position: absolute; inset: 0; overflow: hidden; z-index: 0;
+    background: radial-gradient(120% 120% at 50% 0%, #0d1430 0%, #080a18 60%, #05060f 100%); }
+  .aurora i { position: absolute; border-radius: 50%; display: block; }
+  .a1 { top:-20%; left:-10%; width:60%; height:70%; filter: blur(72px);
+    background: radial-gradient(circle, rgba(59,130,246,var(--aA)), transparent 65%); animation: auroraDrift 22s ease-in-out infinite; }
+  .a2 { top:8%; right:-15%; width:65%; height:80%; filter: blur(82px);
+    background: radial-gradient(circle, rgba(124,58,237,var(--aB)), transparent 65%); animation: auroraDrift2 28s ease-in-out infinite; }
+  .a3 { bottom:-25%; left:28%; width:55%; height:70%; filter: blur(78px);
+    background: radial-gradient(circle, rgba(6,182,212,var(--aC)), transparent 65%); animation: auroraDrift 26s ease-in-out infinite reverse; }
+
+  .layout { position: relative; z-index: 1; display: flex; height: 100%; padding: 14px; gap: 14px; }
+
+  aside {
+    width: 256px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px;
+    padding: 20px 16px; border-radius: 22px;
+    background: linear-gradient(160deg, rgba(255,255,255,0.075), rgba(255,255,255,0.025));
+    backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 18px 50px rgba(2,6,23,0.5), inset 0 1px 0 rgba(255,255,255,0.14);
+  }
+  .brand { display: flex; align-items: center; gap: 11px; padding: 0 4px; }
+  .brand .logo { width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0; display: grid; place-items: center;
+    background: var(--brand-grad); box-shadow: 0 8px 20px var(--glow); }
+  .brand .name { font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
+
+  button { font-family: inherit; cursor: pointer; }
+  .new-chat { display: flex; align-items: center; gap: 9px; width: 100%; padding: 11px 14px; border-radius: 13px;
+    border: 1px solid rgba(255,255,255,0.16); font-size: 13.5px; font-weight: 600; color: #fff;
+    background: var(--brand-grad); box-shadow: 0 10px 26px var(--glow); transition: filter .15s, transform .15s; }
+  .new-chat:hover { filter: brightness(1.1); transform: translateY(-1px); }
+
+  .recents { display: flex; flex-direction: column; gap: 3px; flex: 1; min-height: 0; overflow-y: auto; }
+  .recents .label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: rgba(238,241,251,0.4); padding: 6px 10px; }
+  .recents button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 11px; border-radius: 10px;
+    border: 1px solid transparent; font-size: 13px; font-weight: 450; text-align: left;
+    color: rgba(238,241,251,0.72); background: transparent; overflow: hidden; }
+  .recents button:hover { background: rgba(255,255,255,0.06); }
+  .recents button span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .ingest-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border-radius: 12px;
+    border: 1px dashed rgba(255,255,255,0.2); font-size: 12.5px; font-weight: 600; text-align: left;
+    color: rgba(238,241,251,0.78); background: rgba(255,255,255,0.03); }
+  .ingest-btn:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.35); }
+  .ingest-btn .count { margin-left: auto; font-size: 11px; font-weight: 700; color: var(--accent); }
+
+  .userbox { display: flex; align-items: center; gap: 11px; padding: 9px; border-radius: 13px;
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); }
+  .userbox .av { width: 32px; height: 32px; border-radius: 9px; flex-shrink: 0; display: grid; place-items: center;
+    font-size: 12.5px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #06b6d4, #3b82f6); }
+  .userbox .nm { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .userbox .sub { font-size: 11px; color: rgba(238,241,251,0.5); }
+
+  main { flex: 1; min-width: 0; display: flex; flex-direction: column; border-radius: 22px;
+    background: linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015));
+    backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 18px 50px rgba(2,6,23,0.45); overflow: hidden; }
+
+  .topbar { display: flex; align-items: center; gap: 12px; padding: 13px 22px;
+    border-bottom: 1px solid rgba(255,255,255,0.06); flex-shrink: 0; }
+  .pill { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); font-size: 12.5px; font-weight: 600; }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+  .latency { display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px;
+    background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.28); font-size: 12px; font-weight: 600; color: #6ee7b7; }
+  .latency .dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; box-shadow: 0 0 7px #10b981; }
+
+  .convo { flex: 1; min-height: 0; overflow-y: auto; }
+  .convo-inner { max-width: var(--convo-width); margin: 0 auto; padding: 28px 26px 8px;
+    display: flex; flex-direction: column; gap: 26px; }
+
+  .row { display: flex; flex-direction: column; }
+  .row.user { align-items: flex-end; }
+  .row.ai { align-items: flex-start; }
+  .bubble-user { max-width: 78%; padding: 13px 18px; border-radius: 18px 18px 5px 18px; font-size: 14.5px;
+    line-height: 1.55; font-weight: 450; color: #f2f5ff; background: linear-gradient(160deg, #1c2440, #141a2e);
+    border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 8px 22px rgba(2,6,23,0.45); white-space: pre-wrap; }
+
+  .ai-wrap { width: 100%; }
+  .ai-head { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+  .ai-head .ic { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+    background: var(--brand-grad); box-shadow: 0 5px 14px var(--glow); }
+  .ai-head .nm { font-size: 13px; font-weight: 700; }
+  .ai-card { padding: 20px 22px; border-radius: 6px 18px 18px 18px;
+    background: linear-gradient(160deg, rgba(255,255,255,0.09), rgba(255,255,255,0.03));
+    backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 14px 40px rgba(2,6,23,0.45), inset 0 1px 0 rgba(255,255,255,0.14); }
+  .ai-card.error { border-color: rgba(239,68,68,0.4); background: linear-gradient(160deg, rgba(239,68,68,0.12), rgba(239,68,68,0.04)); }
+  .thinking { display: flex; align-items: center; gap: 12px; }
+  .thinking .dots { display: flex; gap: 6px; }
+  .thinking .dots span { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); animation: thinkPulse 1.2s ease-in-out infinite; }
+  .thinking .dots span:nth-child(2) { animation-delay: .2s; }
+  .thinking .dots span:nth-child(3) { animation-delay: .4s; }
+  .thinking .lbl { font-size: 13px; color: rgba(238,241,251,0.6); font-weight: 500; }
+  .answer { font-size: 14.5px; line-height: 1.7; color: #e8ecf9; white-space: pre-wrap; }
+  .caret { display: inline-block; width: 8px; height: 17px; background: var(--accent); vertical-align: text-bottom;
+    border-radius: 1px; animation: blink 1s step-end infinite; }
+
+  .sources { margin-top: 15px; }
+  .sources .hd { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 11.5px; font-weight: 600;
+    letter-spacing: 0.05em; text-transform: uppercase; color: rgba(238,241,251,0.5); }
+  .cards { display: flex; gap: 11px; overflow-x: auto; padding-bottom: 6px; }
+  .card { flex-shrink: 0; width: 226px; padding: 13px; border-radius: 15px;
+    background: linear-gradient(160deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.11); box-shadow: 0 9px 24px rgba(2,6,23,0.38);
+    transition: transform 0.2s, box-shadow 0.2s; }
+  .card:hover { transform: translateY(-3px); box-shadow: 0 15px 34px var(--glow); }
+  .card .ch { display: flex; align-items: center; gap: 9px; }
+  .card .ci { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 8px; flex-shrink: 0;
+    color: #a5b4fc; background: rgba(99,102,241,0.14); border: 1px solid rgba(99,102,241,0.3); }
+  .card .cn { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .cp { font-size: 11.5px; line-height: 1.5; color: rgba(238,241,251,0.55); margin-top: 9px; height: 51px; overflow: hidden; }
+  .card .cb { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  .card .track { flex: 1; height: 5px; border-radius: 999px; background: rgba(255,255,255,0.1); overflow: hidden; }
+  .card .fill { height: 100%; border-radius: 999px; background: var(--score-grad); }
+  .card .sc { font-size: 11.5px; font-weight: 700; }
+
+  .composer-wrap { flex-shrink: 0; padding: 0 26px 22px; }
+  .composer { max-width: var(--convo-width); margin: 0 auto; }
+  .composer .box { padding: 12px 12px 12px 16px; border-radius: 20px;
+    background: linear-gradient(160deg, rgba(255,255,255,0.09), rgba(255,255,255,0.035));
+    backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+    border: 1px solid rgba(255,255,255,0.14);
+    box-shadow: 0 16px 44px rgba(2,6,23,0.5), inset 0 1px 0 rgba(255,255,255,0.14); }
+  .composer .inner { display: flex; align-items: flex-end; gap: 10px; }
+  .composer textarea { flex: 1; resize: none; border: none; outline: none; background: transparent; color: #f2f5ff;
+    font-family: inherit; font-size: 14.5px; line-height: 1.5; padding: 9px 0; max-height: 120px; }
+  .composer .send { width: 40px; height: 40px; flex-shrink: 0; border-radius: 12px; border: none; display: grid;
+    place-items: center; color: #fff; background: var(--brand-grad); box-shadow: 0 9px 22px var(--glow);
+    transition: filter .15s, transform .15s; }
+  .composer .send:hover { filter: brightness(1.12); transform: translateY(-1px); }
+  .composer .send:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+  .composer .foot { text-align: center; font-size: 11px; color: rgba(238,241,251,0.38); margin-top: 9px; }
+
+  /* ingestion modal */
+  .modal-overlay { position: absolute; inset: 0; z-index: 30; display: none; align-items: center; justify-content: center;
+    padding: 24px; background: rgba(5,6,15,0.6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .modal-overlay.open { display: flex; }
+  .modal { width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto; padding: 26px; border-radius: 24px;
+    background: linear-gradient(160deg, rgba(28,33,58,0.92), rgba(16,20,38,0.92));
+    backdrop-filter: blur(32px); -webkit-backdrop-filter: blur(32px); border: 1px solid rgba(255,255,255,0.16);
+    box-shadow: 0 32px 80px rgba(2,6,23,0.7), inset 0 1px 0 rgba(255,255,255,0.18); }
+  .modal .mh { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; }
+  .modal .mt { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
+  .modal .ms { font-size: 12.5px; color: rgba(238,241,251,0.55); margin-top: 2px; }
+  .modal .mx { width: 32px; height: 32px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); display: grid;
+    place-items: center; color: rgba(238,241,251,0.7); background: rgba(255,255,255,0.05); }
+  .modal .mx:hover { background: rgba(255,255,255,0.12); color: #fff; }
+  .drop { padding: 34px 24px; border-radius: 18px; text-align: center; cursor: pointer;
+    background: radial-gradient(120% 120% at 50% 0%, rgba(168,85,247,0.1), rgba(255,255,255,0.02));
+    border: 2px dashed rgba(120,160,255,0.4); }
+  .drop:hover { border-color: rgba(120,160,255,0.7); }
+  .drop .di { width: 54px; height: 54px; margin: 0 auto 14px; border-radius: 16px; display: grid; place-items: center;
+    background: var(--brand-grad); border: 1px solid rgba(255,255,255,0.18); box-shadow: 0 10px 28px var(--glow); }
+  .drop .dt { font-size: 14.5px; font-weight: 600; }
+  .drop .ds { font-size: 12px; color: rgba(238,241,251,0.5); margin-top: 5px; }
+  .uploads { margin-top: 18px; display: flex; flex-direction: column; gap: 9px; }
+  .up { padding: 13px; border-radius: 14px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); }
+  .up .uh { display: flex; align-items: center; gap: 11px; }
+  .up .ui { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; flex-shrink: 0;
+    color: #a5b4fc; background: rgba(99,102,241,0.14); border: 1px solid rgba(99,102,241,0.3); }
+  .up .un { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .up .ust { font-size: 11px; color: rgba(238,241,251,0.5); }
+  .up .upct { font-size: 12px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+  .up .track { margin-top: 10px; height: 7px; border-radius: 999px; background: rgba(255,255,255,0.08); overflow: hidden; }
+  .up .fill { height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, #06b6d4, #3b82f6, #7c3aed, #06b6d4); background-size: 200% 100%;
+    animation: barFlow 2s linear infinite; box-shadow: 0 0 12px var(--glow); }
+  .modal .mf { display: flex; align-items: center; justify-content: space-between; margin-top: 22px; padding-top: 16px;
+    border-top: 1px solid rgba(255,255,255,0.08); }
+  .modal .mfs { font-size: 12.5px; color: rgba(238,241,251,0.5); }
+  .modal .mfb { display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 12px; border: none;
+    font-size: 13px; font-weight: 600; color: #fff; background: var(--brand-grad); box-shadow: 0 10px 24px var(--glow); }
+  .modal .mfb:hover { filter: brightness(1.1); }
+  .note { margin-top: 14px; font-size: 11.5px; line-height: 1.5; color: rgba(238,241,251,0.5);
+    background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 11px 13px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="aurora"><i class="a1"></i><i class="a2"></i><i class="a3"></i></div>
+
+  <div class="layout">
+    <!-- SIDEBAR -->
+    <aside>
+      <div class="brand">
+        <div class="logo">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+        </div>
+        <div class="name">Helix RAG</div>
+      </div>
+
+      <button class="new-chat" id="newChat">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        New chat
+      </button>
+
+      <div class="recents">
+        <div class="label">Example questions</div>
+        <div id="recents"></div>
+      </div>
+
+      <button class="ingest-btn" id="openIngest">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8 12 3 7 8"/><path d="M12 3v12"/></svg>
+        Ingest documents
+        <span class="count" id="chunkCount">…</span>
+      </button>
+
+      <div class="userbox">
+        <div class="av">AV</div>
+        <div style="min-width:0; flex:1;">
+          <div class="nm">Ava Reyes</div>
+          <div class="sub">Acme Corp</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- MAIN -->
+    <main>
+      <div class="topbar">
+        <div class="pill"><span class="dot"></span> Helix · grounded retrieval</div>
+        <div style="flex:1;"></div>
+        <div class="latency"><span class="dot"></span> <span id="latency">ready</span></div>
+      </div>
+
+      <div class="convo" id="convo">
+        <div class="convo-inner" id="convoInner"></div>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="composer">
+          <div class="box">
+            <div class="inner">
+              <textarea id="draft" rows="1" placeholder="Ask anything across your indexed knowledge base…"></textarea>
+              <button class="send" id="send" title="Send">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="foot">Answers are grounded in your private documents · top_k 5</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- INGESTION MODAL -->
+  <div class="modal-overlay" id="ingestOverlay">
+    <div class="modal" id="ingestModal">
+      <div class="mh">
+        <div>
+          <div class="mt">Data Ingestion</div>
+          <div class="ms">Chunk, embed &amp; index into pgvector</div>
+        </div>
+        <button class="mx" id="closeIngest">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="drop" id="drop">
+        <div class="di">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8 12 3 7 8"/><path d="M12 3v12"/></svg>
+        </div>
+        <div class="dt">Drop files here or click to browse</div>
+        <div class="ds">PDF, TXT, MD · up to 15MB each</div>
+      </div>
+      <input type="file" id="fileInput" accept=".pdf,.txt,.md" multiple style="display:none">
+      <div class="uploads" id="uploads"></div>
+      <div class="note">
+        Files you add here are ingested for real: hashed for idempotency, chunked,
+        embedded via Gemini, and inserted into pgvector — the same pipeline the CLI uses.
+        Large PDFs take a bit (embedding is paced under the API rate limit). Re-uploading
+        the same file is detected and skipped.
+      </div>
+      <div class="mf">
+        <div class="mfs" id="ingestSummary">No files queued yet</div>
+        <button class="mfb" id="uploadBtn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8 12 3 7 8"/><path d="M12 3v12"/></svg>
+          Choose files
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------- Helix RAG: real client wired to POST /query ---------- */
+const API = { query: "/query", health: "/health", ready: "/ready", ingest: "/ingest" };
+const TOP_K = 5;
+
+const el = (id) => document.getElementById(id);
+const convoInner = el("convoInner");
+const convo = el("convo");
+const draft = el("draft");
+const sendBtn = el("send");
+
+let messages = [];   // {role:'user'|'ai', text, thinking, answer, sources, error}
+let busy = false;
+
+const DOC_ICON = '<svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>';
+const BOOK_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>';
+const HELIX_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>';
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function scrollDown() { requestAnimationFrame(() => { convo.scrollTop = convo.scrollHeight; }); }
+
+function scoreColor(pct) { return pct >= 95 ? '#6ee7b7' : pct >= 85 ? 'var(--accent)' : 'rgba(238,241,251,0.65)'; }
+
+function render() {
+  convoInner.innerHTML = messages.map((m, i) => {
+    if (m.role === 'user') {
+      return `<div class="row user"><div class="bubble-user">${esc(m.text)}</div></div>`;
+    }
+    // AI row
+    let body;
+    if (m.thinking) {
+      body = `<div class="ai-card"><div class="thinking">
+        <div class="dots"><span></span><span></span><span></span></div>
+        <span class="lbl">Retrieving chunks &amp; generating grounded answer…</span>
+      </div></div>`;
+    } else if (m.error) {
+      body = `<div class="ai-card error"><div class="answer">${esc(m.answer)}</div></div>`;
+    } else {
+      const caret = m.streaming ? '<span class="caret"></span>' : '';
+      body = `<div class="ai-card"><div class="answer">${esc(m.display ?? m.answer)}${caret}</div></div>`;
+    }
+
+    let sources = '';
+    if (!m.thinking && !m.error && !m.streaming && m.sources && m.sources.length) {
+      const cards = m.sources.map(s => {
+        const pct = Math.round((s.similarity || 0) * 100);
+        return `<div class="card">
+          <div class="ch">
+            <span class="ci">${DOC_ICON}</span>
+            <span class="cn">Doc ${s.document_id} · chunk ${s.chunk_index}</span>
+          </div>
+          <div class="cp">${esc(s.preview || '')}</div>
+          <div class="cb">
+            <div class="track"><div class="fill" style="width:${pct}%"></div></div>
+            <span class="sc" style="color:${scoreColor(pct)}">${pct}%</span>
+          </div>
+        </div>`;
+      }).join('');
+      sources = `<div class="sources">
+        <div class="hd">${BOOK_ICON} ${m.sources.length} source${m.sources.length===1?'':'s'} referenced</div>
+        <div class="cards">${cards}</div>
+      </div>`;
+    }
+
+    return `<div class="row ai"><div class="ai-wrap">
+      <div class="ai-head"><span class="ic">${HELIX_ICON}</span><span class="nm">Helix</span></div>
+      ${body}
+      ${sources}
+    </div></div>`;
+  }).join('');
+  scrollDown();
+}
+
+// typewriter reveal of the final answer (cosmetic, like the original design)
+function streamAnswer(idx, full) {
+  const m = messages[idx];
+  m.streaming = true; m.display = '';
+  let i = 0;
+  const stepSize = Math.max(2, Math.round(full.length / 90));
+  const step = () => {
+    i += stepSize;
+    if (i >= full.length) {
+      m.display = full; m.streaming = false; render();
+      return;
+    }
+    m.display = full.slice(0, i);
+    render();
+    setTimeout(step, 22);
+  };
+  step();
+}
+
+async function ask(question) {
+  const q = (question ?? draft.value).trim();
+  if (!q || busy) return;
+  busy = true; sendBtn.disabled = true;
+  draft.value = ''; autosize();
+
+  messages.push({ role: 'user', text: q });
+  const aiIdx = messages.push({ role: 'ai', thinking: true, sources: [] }) - 1;
+  render();
+
+  const t0 = performance.now();
+  try {
+    const res = await fetch(API.query, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q, top_k: TOP_K }),
+    });
+    const ms = Math.round(performance.now() - t0);
+
+    if (!res.ok) {
+      let msg = `Request failed (HTTP ${res.status}).`;
+      try {
+        const j = await res.json();
+        msg = j.error || j.detail || msg;   // 429 -> {error}, 503 -> {detail}
+      } catch (_) {}
+      messages[aiIdx] = { role: 'ai', error: true, answer: msg, sources: [] };
+      el('latency').textContent = `${ms}ms`;
+      render();
+      return;
+    }
+
+    const data = await res.json();
+    el('latency').textContent = `${ms}ms latency`;
+    messages[aiIdx] = { role: 'ai', thinking: false, answer: data.answer || '', sources: data.sources || [] };
+    render();
+    streamAnswer(aiIdx, data.answer || '');
+  } catch (e) {
+    messages[aiIdx] = { role: 'ai', error: true, answer: 'Could not reach the server. Is the API running?', sources: [] };
+    render();
+  } finally {
+    busy = false; sendBtn.disabled = false;
+  }
+}
+
+/* ---------- composer ---------- */
+function autosize() {
+  draft.style.height = 'auto';
+  draft.style.height = Math.min(120, draft.scrollHeight) + 'px';
+}
+draft.addEventListener('input', autosize);
+draft.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); }
+});
+sendBtn.addEventListener('click', () => ask());
+el('newChat').addEventListener('click', () => { messages = []; render(); draft.focus(); });
+
+/* ---------- example questions (tuned to the ingested Digital Image Processing corpus) ---------- */
+const EXAMPLES = [
+  'What is image compression and how does the encoder work?',
+  'What are the two components of the decoder?',
+  'What are the stages of the image compression encoder?',
+  'Explain the symbol coder and mapper.',
+  'What is quantization in image compression?',
+];
+el('recents').innerHTML = EXAMPLES.map((q, i) =>
+  `<button data-q="${esc(q)}"><span>${esc(q)}</span></button>`).join('');
+el('recents').querySelectorAll('button').forEach(b =>
+  b.addEventListener('click', () => ask(b.getAttribute('data-q'))));
+
+/* ---------- ingestion modal (visual preview; honest note inside) ---------- */
+const overlay = el('ingestOverlay');
+el('openIngest').addEventListener('click', () => overlay.classList.add('open'));
+el('closeIngest').addEventListener('click', () => overlay.classList.remove('open'));
+overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('open'); });
+
+/*
+  Real upload: send each file to POST /ingest. The endpoint runs the full
+  blocking pipeline (chunk -> embed -> store) and returns when done, so we
+  can't show true byte-progress; instead we show an indeterminate "Embedding…"
+  state (animated bar) while awaiting, then the real result (chunks indexed,
+  skipped duplicate, or error) from the server.
+*/
+let uploadQueue = [];     // {name, size, status, message, chunks}
+let uploadingNow = false;
+const fileInput = el('fileInput');
+
+const ULABEL = { queued: 'Queued', working: 'Chunking & embedding…', indexed: 'Indexed ✓', skipped: 'Already indexed', failed: 'Failed' };
+const fmtSize = (b) => b < 1024 ? b + ' B' : b < 1048576 ? (b/1024).toFixed(0) + ' KB' : (b/1048576).toFixed(1) + ' MB';
+
+function drawUploads() {
+  el('uploads').innerHTML = uploadQueue.map(u => {
+    const indeterminate = u.status === 'working';
+    const pct = u.status === 'indexed' || u.status === 'skipped' ? 100 : indeterminate ? 100 : 0;
+    const right = u.status === 'indexed' ? `+${u.chunks}` :
+                  u.status === 'skipped' ? 'Skip' :
+                  u.status === 'failed' ? '!' :
+                  u.status === 'working' ? '…' : '';
+    const rightColor = u.status === 'failed' ? '#fca5a5' : u.status === 'indexed' ? '#6ee7b7' : 'var(--accent)';
+    const sub = u.message || ULABEL[u.status] || u.status;
+    const fillStyle = (u.status === 'indexed' || u.status === 'skipped')
+      ? 'width:100%; animation:none; background:linear-gradient(90deg,#10b981,#06b6d4);'
+      : u.status === 'failed'
+      ? 'width:100%; animation:none; background:rgba(239,68,68,0.6);'
+      : indeterminate ? 'width:100%;' : 'width:0%;';
+    return `<div class="up"><div class="uh">
+        <span class="ui">${DOC_ICON}</span>
+        <div style="flex:1; min-width:0;">
+          <div class="un">${esc(u.name)}</div>
+          <div class="ust">${u.size} · ${esc(sub)}</div>
+        </div>
+        <span class="upct" style="color:${rightColor}">${right}</span>
+      </div>
+      <div class="track"><div class="fill" style="${fillStyle}"></div></div></div>`;
+  }).join('');
+  const done = uploadQueue.filter(u => u.status === 'indexed').length;
+  const skip = uploadQueue.filter(u => u.status === 'skipped').length;
+  const fail = uploadQueue.filter(u => u.status === 'failed').length;
+  el('ingestSummary').textContent = uploadQueue.length
+    ? `${done} indexed · ${skip} skipped · ${fail} failed`
+    : 'No files queued yet';
+}
+
+async function processQueue() {
+  if (uploadingNow) return;
+  uploadingNow = true;
+  for (const u of uploadQueue) {
+    if (u.status !== 'queued') continue;
+    u.status = 'working'; drawUploads();
+    try {
+      const fd = new FormData();
+      fd.append('file', u.file, u.name);
+      const res = await fetch(API.ingest, { method: 'POST', body: fd });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        u.status = 'failed'; u.message = j.detail || `HTTP ${res.status}`;
+      } else if (j.status === 'ingested') {
+        u.status = 'indexed'; u.chunks = j.chunks; u.message = `Indexed ${j.chunks} chunks`;
+      } else if (j.status === 'skipped') {
+        u.status = 'skipped'; u.message = 'Duplicate — already indexed';
+      } else {
+        u.status = 'failed'; u.message = j.message || 'Failed';
+      }
+    } catch (e) {
+      u.status = 'failed'; u.message = 'Network error';
+    }
+    drawUploads();
+    loadStats(); // refresh sidebar chunk count as files land
+  }
+  uploadingNow = false;
+}
+
+function addFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  for (const f of files) {
+    uploadQueue.push({ file: f, name: f.name, size: fmtSize(f.size), status: 'queued', message: '', chunks: 0 });
+  }
+  drawUploads();
+  processQueue();
+}
+
+el('uploadBtn').addEventListener('click', () => fileInput.click());
+el('drop').addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => { addFiles(e.target.files); fileInput.value = ''; });
+
+// drag & drop onto the drop zone
+const drop = el('drop');
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, (e) => {
+  e.preventDefault(); e.stopPropagation(); drop.style.borderColor = 'rgba(120,160,255,0.9)';
+}));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, (e) => {
+  e.preventDefault(); e.stopPropagation(); drop.style.borderColor = '';
+}));
+drop.addEventListener('drop', (e) => { addFiles(e.dataTransfer.files); });
+
+/* ---------- live chunk count in the sidebar (real, from /stats) ---------- */
+async function loadStats() {
+  try {
+    const r = await fetch("/stats");
+    const j = await r.json();
+    el('chunkCount').textContent = (j.chunks != null) ? j.chunks.toLocaleString() : '—';
+  } catch (_) { el('chunkCount').textContent = '—'; }
+}
+loadStats();
+
+/* ---------- greeting ---------- */
+messages.push({
+  role: 'ai', thinking: false,
+  answer: "Hi — I'm Helix. Ask me anything about your indexed documents and I'll answer strictly from the retrieved passages, with the source chunks shown below each answer. If the answer isn't in the corpus, I'll say so rather than guess.",
+  sources: [],
+});
+render();
+draft.focus();
+</script>
+</body>
+</html>
