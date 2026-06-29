@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: rag_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: raguser
+      POSTGRES_PASSWORD: ragpassword
+      POSTGRES_DB: ragdb
+    # Host port 5434 (not 5432) to avoid colliding with a native Windows
+    # PostgreSQL service on 5432 and another container (tradeup_db) on 5433.
+    # Container still listens on 5432 internally; only host mapping changed.
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
