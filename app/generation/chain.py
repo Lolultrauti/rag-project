@@ -25,7 +25,7 @@ from google.genai import types
 from google.genai import errors as genai_errors
 
 from app.config import settings
-from app.retrieval.vector_search import search
+from app.retrieval.hybrid import search
 from app.generation.prompt_templates import (
     SYSTEM_INSTRUCTION,
     ABSTAIN_MESSAGE,
