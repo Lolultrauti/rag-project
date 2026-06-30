@@ -16,7 +16,7 @@ Pure function: no DB, no API, fully deterministic -> trivially unit-testable.
 from collections import defaultdict
 
 
-def rrf_fuse(ranked_lists, k: int = 60):
+def rrf_fuse(ranked_lists, k: int = 60) -> list:
     """
     Fuse several ranked lists of keys into one, best-first.
 

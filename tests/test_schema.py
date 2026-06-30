@@ -1,4 +1,5 @@
 """Verifies the hybrid-retrieval migration (002) is applied to the database."""
+import pytest
 import psycopg2
 from app.config import settings
 
@@ -34,6 +35,6 @@ def test_existing_rows_backfilled():
         cur.execute("SELECT count(*) FROM document_chunks;")
         total = cur.fetchone()[0]
         if total == 0:
-            return  # nothing to verify
+            pytest.skip("no chunks to verify")
         cur.execute("SELECT count(*) FROM document_chunks WHERE content_tsv IS NULL;")
         assert cur.fetchone()[0] == 0

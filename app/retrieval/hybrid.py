@@ -37,7 +37,7 @@ RRF_K = 60
 FINAL_TOP_K = 6
 
 
-def _hybrid_blocking(query: str, top_k: int):
+def _hybrid_blocking(query: str, top_k: int) -> list[dict]:
     dense = []
     lexical = []
     try:
@@ -64,7 +64,7 @@ def _hybrid_blocking(query: str, top_k: int):
     return [by_id[cid] for cid in fused_ids[:top_k]]
 
 
-async def search(query: str, top_k: int = FINAL_TOP_K):
+async def search(query: str, top_k: int = FINAL_TOP_K) -> list[dict]:
     """
     Embed-and-retrieve the most relevant chunks for `query`, combining semantic
     and keyword search. Returns up to top_k chunk dicts (see module docstring for

@@ -65,4 +65,9 @@ def pooled_connection():
     try:
         yield conn
     finally:
+        try:
+            if not conn.closed:
+                conn.rollback()
+        except Exception:
+            pass
         _pool.putconn(conn)

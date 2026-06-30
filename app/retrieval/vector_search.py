@@ -22,7 +22,7 @@ DEFAULT_MIN_SIMILARITY = 0.62
 
 
 def dense_search(query: str, limit: int = DEFAULT_CANDIDATES,
-                 min_similarity: float = DEFAULT_MIN_SIMILARITY):
+                 min_similarity: float = DEFAULT_MIN_SIMILARITY) -> list[dict]:
     """
     Semantic retrieval: embed the query into the same 768-dim space as the
     documents, then return the chunks whose embeddings are closest by cosine

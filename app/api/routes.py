@@ -36,6 +36,7 @@ from app.rate_limit import limiter
 from app.cost_cap import check_and_increment
 from app.db.pool import pooled_connection
 from app.generation.chain import answer_question, maybe_handle_small_talk
+from app.retrieval.hybrid import FINAL_TOP_K
 
 logger = logging.getLogger("rag.api")
 
@@ -47,7 +48,7 @@ class QueryRequest(BaseModel):
     # (megabyte-long "questions"). Not full input hardening -- that's later.
     question: str = Field(..., min_length=1, max_length=1000,
                           description="User's question.")
-    top_k: int = Field(5, ge=1, le=20, description="How many chunks to retrieve.")
+    top_k: int = Field(FINAL_TOP_K, ge=1, le=20, description="How many chunks to retrieve.")
 
 
 class Source(BaseModel):

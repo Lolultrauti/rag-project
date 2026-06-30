@@ -25,7 +25,7 @@ from google.genai import types
 from google.genai import errors as genai_errors
 
 from app.config import settings
-from app.retrieval.hybrid import search
+from app.retrieval.hybrid import search, FINAL_TOP_K
 from app.generation.prompt_templates import (
     SYSTEM_INSTRUCTION,
     ABSTAIN_MESSAGE,
@@ -125,7 +125,7 @@ async def generate_answer(prompt: str) -> str:
             await asyncio.sleep(backoff)
 
 
-async def answer_question(question: str, top_k: int = 5):
+async def answer_question(question: str, top_k: int = FINAL_TOP_K):
     """
     Full RAG pass: retrieve -> build grounded prompt -> generate.
 

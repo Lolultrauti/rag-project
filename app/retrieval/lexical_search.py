@@ -21,7 +21,7 @@ to a threadpool so the event loop is never blocked.
 from app.db.pool import pooled_connection
 
 
-def lexical_search(query: str, limit: int = 20):
+def lexical_search(query: str, limit: int = 20) -> list[dict]:
     """
     Return up to `limit` chunks matching `query` by keyword, ranked best-first.
 
