@@ -32,6 +32,18 @@ def lexical_search(query: str, limit: int = 20) -> list[dict]:
 
     Returns [] when the query reduces to no lexemes or nothing matches (a normal,
     expected outcome -- it lets the caller abstain when nothing is found).
+
+    OR semantics (important): we deliberately do NOT use websearch_to_tsquery /
+    plainto_tsquery directly, because both AND the query terms together. For a
+    natural question like "who performed this experiment" that means a chunk must
+    contain *every* content word ("perform" AND "experiment") to match -- which
+    defeats keyword recall, since the passage naming the experiment may not also
+    repeat "performed". We want chunks that contain ANY of the terms, ranked by
+    ts_rank_cd so the densest matches still float to the top. The standard
+    Postgres idiom for that: run plainto_tsquery (it sanitizes input, stems, and
+    drops stopwords -- giving an AND-joined query like 'perform & experi'), then
+    swap the '&' operators for '|' to make it OR. An empty input yields an empty
+    tsquery, which matches nothing -> [].
     """
     with pooled_connection() as conn:
         with conn.cursor() as cur:
@@ -45,7 +57,13 @@ def lexical_search(query: str, limit: int = 20) -> list[dict]:
                     d.source_filename
                 FROM document_chunks dc
                 JOIN documents d ON d.id = dc.document_id,
-                     websearch_to_tsquery('english', %s) AS q
+                     to_tsquery(
+                         'english',
+                         regexp_replace(
+                             plainto_tsquery('english', %s)::text,
+                             ' & ', ' | ', 'g'
+                         )
+                     ) AS q
                 WHERE dc.content_tsv @@ q
                 ORDER BY ts_rank_cd(dc.content_tsv, q) DESC
                 LIMIT %s;
