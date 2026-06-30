@@ -57,6 +57,12 @@ To deploy to a server, point your host at this repo (it has the `Dockerfile` and
 `docker-compose.yml`). Set the same env vars in the host's secret store. Put a TLS
 reverse proxy (Caddy/Nginx, or the PaaS's built-in) in front of port 8000.
 
+### Deploy to AWS
+
+One-command CloudFormation stack (EC2 + Docker Compose, Gemini key from SSM
+Parameter Store). See **[deploy/aws/README.md](deploy/aws/README.md)** — store the key,
+`aws cloudformation deploy ...`, open the `AppURL`.
+
 ## Local development (without Docker for the app)
 
 ```bash

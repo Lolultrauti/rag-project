@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Helix RAG on a single EC2 host running the app + pgvector Postgres via Docker
+  Compose. The Gemini API key is read at boot from SSM Parameter Store (a
+  SecureString), so the secret never lives in this template or in EC2 user-data.
+  Access the instance with SSM Session Manager (no SSH key required).
+
+Parameters:
+  GeminiApiKeySsmName:
+    Type: String
+    Default: /helix/gemini_api_key
+    Description: >
+      Name of the SSM Parameter Store SecureString holding the Gemini API key.
+      Create it BEFORE deploying this stack (see deploy/aws/README.md):
+      aws ssm put-parameter --name /helix/gemini_api_key --type SecureString --value <KEY>
+
+  RepoUrl:
+    Type: String
+    Default: https://github.com/Lolultrauti/rag-project.git
+    Description: Public git URL of the application repo to clone and build.
+
+  InstanceType:
+    Type: String
+    Default: t3.small
+    AllowedValues: [t3.small, t3.medium, t3.large]
+    Description: >
+      t3.small (2 GB) is the practical minimum — building the image installs
+      numpy/langchain wheels; t3.micro (1 GB) can OOM during pip install.
+
+  AppPortCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed to reach the app on port 8000. Narrow this to your IP for a private demo.
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Latest Amazon Linux 2023 AMI (resolved automatically; do not edit).
+
+Resources:
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Enables SSM Session Manager shell access without opening SSH.
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: read-gemini-key
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${GeminiApiKeySsmName}
+              - Effect: Allow
+                # Required to decrypt the SecureString (AWS-managed SSM key).
+                Action: kms:Decrypt
+                Resource: "*"
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Helix RAG app access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: !Ref AppPortCidr
+          Description: App HTTP
+
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds: [!GetAtt AppSecurityGroup.GroupId]
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: helix-rag
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          # --- Docker + Compose plugin (Amazon Linux 2023) ---
+          dnf update -y
+          dnf install -y docker git
+          systemctl enable --now docker
+          mkdir -p /usr/libexec/docker/cli-plugins
+          curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+            -o /usr/libexec/docker/cli-plugins/docker-compose
+          chmod +x /usr/libexec/docker/cli-plugins/docker-compose
+
+          # --- Fetch the app ---
+          cd /opt
+          git clone ${RepoUrl} helix
+          cd /opt/helix
+
+          # --- Read the Gemini key from SSM (never baked into this script) ---
+          GEMINI_API_KEY="$(aws ssm get-parameter \
+            --name '${GeminiApiKeySsmName}' --with-decryption \
+            --query Parameter.Value --output text --region ${AWS::Region})"
+
+          # --- Write .env (compose overrides DATABASE_URL to the internal db host) ---
+          cat > /opt/helix/.env <<EOF
+          GEMINI_API_KEY=${!GEMINI_API_KEY}
+          DATABASE_URL=postgresql://raguser:ragpassword@db:5432/ragdb
+          POSTGRES_USER=raguser
+          POSTGRES_PASSWORD=ragpassword
+          POSTGRES_DB=ragdb
+          RATE_LIMIT=10/minute
+          DAILY_COST_CAP=300
+          EOF
+          chmod 600 /opt/helix/.env
+
+          # --- Build + run ---
+          docker compose up -d --build
+
+Outputs:
+  AppURL:
+    Description: Open this once the stack finishes and the instance has built the image (~3-5 min).
+    Value: !Sub http://${AppInstance.PublicDnsName}:8000
+  InstanceId:
+    Description: For SSM Session Manager access (Systems Manager > Session Manager > Start session).
+    Value: !Ref AppInstance
