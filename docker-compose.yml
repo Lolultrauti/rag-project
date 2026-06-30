@@ -6,9 +6,9 @@ services:
     container_name: rag_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: raguser
-      POSTGRES_PASSWORD: ragpassword
-      POSTGRES_DB: ragdb
+      POSTGRES_USER: ${POSTGRES_USER:-raguser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ragpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-ragdb}
     # Host port 5434 (not 5432) to avoid colliding with a native Windows
     # PostgreSQL service on 5432 and another container (tradeup_db) on 5433.
     # Container still listens on 5432 internally; only host mapping changed.
@@ -16,6 +16,32 @@ services:
       - "5434:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Applied automatically ONLY when the data volume is first created (empty).
+      # schema.sql now contains the full schema incl. the hybrid full-text column
+      # + GIN index, so a fresh deployment is ready with no manual migration step.
+      - ./schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-raguser} -d ${POSTGRES_DB:-ragdb}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: rag_api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Override whatever DATABASE_URL is in .env: inside the compose network the
+      # app reaches Postgres at host "db" on the internal port 5432, not the
+      # host-mapped 5434. GEMINI_API_KEY and the optional tuning vars still come
+      # from .env via env_file above.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-raguser}:${POSTGRES_PASSWORD:-ragpassword}@db:5432/${POSTGRES_DB:-ragdb}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
 
 volumes:
   pgdata:
