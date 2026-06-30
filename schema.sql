@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     chunk_index INTEGER NOT NULL,
     content TEXT NOT NULL,
     embedding VECTOR(768) NOT NULL,
+    content_tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -22,3 +23,6 @@ CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding
 
 CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id
     ON document_chunks (document_id);
+
+CREATE INDEX IF NOT EXISTS idx_document_chunks_tsv
+    ON document_chunks USING GIN (content_tsv);
